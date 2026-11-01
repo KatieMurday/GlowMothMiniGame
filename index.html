@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Glow Moth</title>
+<style>
+  :root { --night:#0e1b2c; --moon:#e8e4d4; --amber:#ffb347; --storm:#5b6b86; }
+  html, body { margin:0; height:100%; background:var(--night); color:var(--moon); font-family:Georgia, 'Times New Roman', serif; overflow:hidden; touch-action:none; }
+  canvas { display:block; width:100%; height:100%; }
+  #hud { position:fixed; top:14px; left:18px; right:18px; display:flex; justify-content:space-between; font-size:1.1rem; pointer-events:none; }
+  #msg { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:.6rem; background:rgba(14,27,44,.82); }
+  #msg h1 { font-size:2.6rem; margin:0; font-weight:normal; letter-spacing:.02em; }
+  #msg p { margin:0; max-width:30ch; line-height:1.5; opacity:.85; }
+  button { margin-top:.8rem; font:inherit; font-size:1.1rem; padding:.6rem 1.6rem; border-radius:999px; border:2px solid var(--amber); background:transparent; color:var(--amber); cursor:pointer; }
+  button:hover, button:focus-visible { background:var(--amber); color:var(--night); outline:none; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><span id="score">Light: 0</span><span id="best">Best: 0</span></div>
+<div id="msg">
+  <h1 id="title">Glow Moth</h1>
+  <p id="sub">Guide the moth to the glowing orbs. Stay clear of the storm clouds. Move with mouse, touch, or arrow keys.</p>
+  <button id="go">Start</button>
+</div>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W, H;
+function resize(){ W = cv.width = innerWidth; H = cv.height = innerHeight; }
+addEventListener('resize', resize); resize();
+
+let best = 0;
+try { best = +localStorage.getItem('glowmoth-best') || 0; } catch(e){}
+document.getElementById('best').textContent = 'Best: ' + best;
+
+const keys = {};
+addEventListener('keydown', e => keys[e.key] = true);
+addEventListener('keyup', e => keys[e.key] = false);
+let target = null;
+function setTarget(x,y){ target = {x,y}; }
+cv.addEventListener('pointermove', e => setTarget(e.clientX, e.clientY));
+cv.addEventListener('pointerdown', e => setTarget(e.clientX, e.clientY));
+
+let moth, orbs, clouds, score, running = false, t = 0;
+const rand = (a,b) => a + Math.random()*(b-a);
+
+function spawnOrb(){ orbs.push({x:rand(40,W-40), y:rand(70,H-40), r:9, life:1}); }
+function spawnCloud(){
+  const side = Math.floor(Math.random()*4), r = rand(22,40), sp = rand(1,2.2) + score*0.04;
+  let x, y;
+  if (side===0){ x=-r; y=rand(0,H); } else if (side===1){ x=W+r; y=rand(0,H); }
+  else if (side===2){ x=rand(0,W); y=-r; } else { x=rand(0,W); y=H+r; }
+  const a = Math.atan2(moth.y - y, moth.x - x) + rand(-.5,.5);
+  clouds.push({x,y,r,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp});
+}
+
+function start(){
+  moth = {x:W/2, y:H/2, vx:0, vy:0};
+  orbs = []; clouds = []; score = 0; t = 0; target = null;
+  for (let i=0;i<3;i++) spawnOrb();
+  document.getElementById('msg').classList.add('hidden');
+  running = true;
+}
+
+function end(){
+  running = false;
+  if (score > best){ best = score; try { localStorage.setItem('glowmoth-best', best); } catch(e){} }
+  document.getElementById('best').textContent = 'Best: ' + best;
+  document.getElementById('title').textContent = 'The storm caught you';
+  document.getElementById('sub').textContent = 'You gathered ' + score + ' light. Try again?';
+  document.getElementById('go').textContent = 'Play again';
+  document.getElementById('msg').classList.remove('hidden');
+}
+document.getElementById('go').onclick = start;
+
+function update(){
+  t++;
+  let ax = 0, ay = 0;
+  if (keys.ArrowLeft||keys.a) ax -= 1; if (keys.ArrowRight||keys.d) ax += 1;
+  if (keys.ArrowUp||keys.w) ay -= 1; if (keys.ArrowDown||keys.s) ay += 1;
+  if (ax||ay){ target = null; moth.vx += ax*0.5; moth.vy += ay*0.5; }
+  else if (target){
+    const dx = target.x-moth.x, dy = target.y-moth.y, d = Math.hypot(dx,dy);
+    if (d > 4){ moth.vx += dx/d*0.5; moth.vy += dy/d*0.5; }
+  }
+  moth.vx *= 0.9; moth.vy *= 0.9;
+  moth.x = Math.min(W, Math.max(0, moth.x + moth.vx));
+  moth.y = Math.min(H, Math.max(0, moth.y + moth.vy));
+
+  if (t % Math.max(40, 110 - score*3) === 0) spawnCloud();
+  if (orbs.length < 3) spawnOrb();
+
+  orbs = orbs.filter(o => {
+    if (Math.hypot(o.x-moth.x, o.y-moth.y) < o.r + 12){ score++; document.getElementById('score').textContent = 'Light: ' + score; return false; }
+    return true;
+  });
+  clouds.forEach(c => { c.x += c.vx; c.y += c.vy; });
+  clouds = clouds.filter(c => c.x>-100 && c.x<W+100 && c.y>-100 && c.y<H+100);
+  for (const c of clouds) if (Math.hypot(c.x-moth.x, c.y-moth.y) < c.r + 6) { end(); break; }
+}
+
+function glow(x,y,r,color){
+  const g = ctx.createRadialGradient(x,y,0,x,y,r);
+  g.addColorStop(0,color); g.addColorStop(1,'rgba(255,179,71,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.fill();
+}
+
+function draw(){
+  ctx.fillStyle = '#0e1b2c'; ctx.fillRect(0,0,W,H);
+  if (!moth) return;
+  orbs.forEach(o => {
+    const p = 1 + Math.sin(t*0.08 + o.x)*0.15;
+    glow(o.x,o.y,o.r*4*p,'rgba(255,179,71,.55)');
+    ctx.fillStyle = '#ffe3b0'; ctx.beginPath(); ctx.arc(o.x,o.y,o.r*0.6,0,7); ctx.fill();
+  });
+  clouds.forEach(c => {
+    ctx.fillStyle = '#3a4963';
+    [[0,0,1],[-.6,.2,.7],[.6,.2,.7],[0,-.4,.65]].forEach(([dx,dy,s]) => {
+      ctx.beginPath(); ctx.arc(c.x+dx*c.r, c.y+dy*c.r, c.r*s, 0, 7); ctx.fill();
+    });
+  });
+  glow(moth.x,moth.y,40,'rgba(232,228,212,.35)');
+  const flap = Math.sin(t*0.5)*7 + 9;
+  ctx.fillStyle = '#e8e4d4';
+  ctx.beginPath(); ctx.ellipse(moth.x-8, moth.y, 9, flap, -0.4, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(moth.x+8, moth.y, 9, flap, 0.4, 0, 7); ctx.fill();
+  ctx.fillStyle = '#8a7a5c'; ctx.beginPath(); ctx.ellipse(moth.x, moth.y, 3, 8, 0, 0, 7); ctx.fill();
+}
+
+(function loop(){ if (running) update(); draw(); requestAnimationFrame(loop); })();
+</script>
+</body>
+</html>
